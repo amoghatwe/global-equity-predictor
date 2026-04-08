@@ -1,0 +1,12 @@
+{
+  "markets": [
+    "USA",
+    "Europe",
+    "Japan",
+    "UK",
+    "EM"
+  ],
+  "model_type": "ensemble",
+  "timestamp": "2026-04-07T17:14:06.123556",
+  "n_models": 15
+}
