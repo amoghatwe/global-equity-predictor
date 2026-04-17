@@ -119,7 +119,7 @@ class FREDDataSource(DataSource):
         freq_map = {
             'D': 'D',
             'W': 'W',
-            'M': 'ME',
+            'M': 'M',
             'Q': 'Q',
             'A': 'A'
         }

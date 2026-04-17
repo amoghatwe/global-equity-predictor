@@ -146,9 +146,14 @@ class FeaturePipeline:
                     ma = prices.rolling(window=window).mean()
                     features[f"{market}_price_ma{window}_ratio"] = prices / ma
                 
-                # Long-term trend deviation
+                # Long-term trend deviation (avoid division by zero)
                 long_ma = prices.rolling(window=60).mean()
-                features[f"{market}_price_deviation_60m"] = (prices - long_ma) / long_ma * 100
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    features[f"{market}_price_deviation_60m"] = np.where(
+                        long_ma != 0,
+                        (prices - long_ma) / long_ma * 100,
+                        np.nan
+                    )
         
         return features
     
@@ -199,8 +204,11 @@ class FeaturePipeline:
         # Real interest rates
         if 'us_data_yield_10y' in data.columns:
             for col in data.columns:
-                if 'inflation' in col.lower():
-                    features['real_rate_10y'] = data['us_data_yield_10y'] - data[col]
+                if 'inflation' in col.lower() and col in data.columns:
+                    inflation_data = data[col]
+                    if inflation_data is not None and not inflation_data.empty:
+                        features['real_rate_10y'] = data['us_data_yield_10y'] - inflation_data
+                        break
         
         return features
     

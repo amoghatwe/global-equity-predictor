@@ -86,6 +86,7 @@ class ReportGenerator:
         
         if not summary_data:
             print("\n  No predictions available.")
+            print("  Run the prediction pipeline first: python run_prediction.py --mode predict")
             return
         
         # Sort by expected return
@@ -378,6 +379,8 @@ class ReportGenerator:
         Returns:
             Confidence string: 'Low', 'Medium', or 'High'
         """
+        if pd.isna(model_std) or model_std < 0:
+            return "Unknown"
         if model_std < 1.0:
             return "High"
         elif model_std < 2.5:

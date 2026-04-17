@@ -1,4 +1,3 @@
-"""
 Quick Reference Guide for Global Equity Predictor
 ================================================
 

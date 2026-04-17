@@ -115,7 +115,7 @@ class EquityDataSource(DataSource):
         
         # Resample to monthly
         if frequency == "M":
-            df = df.resample('ME').last()
+            df = df.resample('M').last()
         elif frequency == "W":
             df = df.resample('W').last()
         
