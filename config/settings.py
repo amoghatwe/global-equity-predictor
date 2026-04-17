@@ -1,6 +1,7 @@
 """
 Configuration settings for Global Equity Market Return Predictor.
 """
+
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -11,8 +12,12 @@ load_dotenv()
 # Project paths
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_RAW_PATH = Path(os.getenv("DATA_RAW_PATH", PROJECT_ROOT / "data" / "raw"))
-DATA_PROCESSED_PATH = Path(os.getenv("DATA_PROCESSED_PATH", PROJECT_ROOT / "data" / "processed"))
-DATA_FEATURES_PATH = Path(os.getenv("DATA_FEATURES_PATH", PROJECT_ROOT / "data" / "features"))
+DATA_PROCESSED_PATH = Path(
+    os.getenv("DATA_PROCESSED_PATH", PROJECT_ROOT / "data" / "processed")
+)
+DATA_FEATURES_PATH = Path(
+    os.getenv("DATA_FEATURES_PATH", PROJECT_ROOT / "data" / "features")
+)
 
 # Ensure directories exist
 for path in [DATA_RAW_PATH, DATA_PROCESSED_PATH, DATA_FEATURES_PATH]:
@@ -117,6 +122,18 @@ XGB_PARAMS = {
     "n_jobs": -1,
 }
 
+# ARMA Parameters
+ARMA_PARAMS = {
+    "order": (1, 1),
+    "trend": "c",
+}
+
+# ARIMA Parameters
+ARIMA_PARAMS = {
+    "order": (1, 1, 1),
+    "trend": "c",
+}
+
 # World Bank indicators
 WB_INDICATORS = {
     "gdp_current_usd": "NY.GDP.MKTP.CD",
@@ -152,7 +169,13 @@ REPORT_CONFIG = {
     "author": "Global Equity Predictor System",
     "forecast_horizon_years": FORECAST_HORIZON_MONTHS // 12,
     "confidence_levels": ["Low", "Medium", "High"],
-    "historical_periods": ["1980-1990", "1990-2000", "2000-2010", "2010-2020", "2020-Present"],
+    "historical_periods": [
+        "1980-1990",
+        "1990-2000",
+        "2000-2010",
+        "2010-2020",
+        "2020-Present",
+    ],
 }
 
 # Logging configuration
@@ -160,9 +183,7 @@ LOGGING_CONFIG = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "standard": {
-            "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-        },
+        "standard": {"format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s"},
     },
     "handlers": {
         "default": {

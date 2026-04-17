@@ -173,6 +173,9 @@ class DataPipeline:
             elif source_name == "fred":
                 processed_data["us_data"] = self._process_fred(data)
             elif source_name == "equity":
+                if data.empty:
+                    self.logger.error("Equity data is empty - critical for predictions")
+                    raise ValueError("Equity data collection failed")
                 processed_data["equity"] = data
         
         # Combine all sources
@@ -189,7 +192,7 @@ class DataPipeline:
         data_monthly = data.resample('M').interpolate(method='linear')
         
         # Forward fill any remaining gaps
-        data_monthly = data_monthly.fillna(method='ffill', limit=3)
+        data_monthly = data_monthly.ffill(limit=3)
         
         return data_monthly
     
@@ -198,11 +201,14 @@ class DataPipeline:
         self.logger.info("Processing FRED data...")
         
         # Most FRED data is already monthly, just ensure consistency
-        data = data.resample('ME').last()
+        data = data.resample('M').last()
         
         # Calculate yield curve spread if both yields available
         if 'yield_10y' in data.columns and 'yield_2y' in data.columns:
             data['yield_curve_spread'] = data['yield_10y'] - data['yield_2y']
+        
+        # Forward fill sparse data
+        data = data.ffill(limit=3)
         
         return data
     
@@ -223,7 +229,7 @@ class DataPipeline:
         for source_name, data in processed_data.items():
             if data is not None and not data.empty:
                 # Ensure monthly frequency
-                data = data.resample('ME').last()
+                data = data.resample('M').last()
                 
                 # Prefix columns with source name
                 data = data.add_prefix(f"{source_name}_")

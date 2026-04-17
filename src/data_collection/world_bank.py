@@ -53,12 +53,12 @@ class WorldBankDataSource(DataSource):
         
         try:
             # Fetch data from World Bank
-            # date parameter accepts tuple for date range, freq for periodicity
+            # World Bank data is primarily annual, so we don't specify freq
+            # Will interpolate to monthly in processing pipeline
             data = wbdata.get_dataframe(
                 indicators=indicators,
                 country=countries,
-                date=(datetime(start_year, 1, 1), datetime(end_year, 12, 31)),
-                freq='M'  # Monthly frequency
+                date=(start_year, end_year)
             )
             
             if data.empty:
