@@ -1,9 +1,17 @@
 """
-Data collection pipeline that orchestrates all data sources.
+Data Collection Pipeline.
+
+This module orchestrates the entire data gathering process by coordinating
+multiple data providers (World Bank, FRED, Equity Markets). It handles:
+1. Provider initialization and registration.
+2. Sequential data collection with error handling.
+3. Merging disparate data sources into a single unified time series.
+4. Feature preprocessing (interpolation, cleaning).
 """
+
 import pandas as pd
 import numpy as np
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 from datetime import datetime
 import logging
 from pathlib import Path
@@ -15,270 +23,205 @@ from config.settings import (
     START_DATE, 
     END_DATE
 )
-from .base import DataCollector
-from .world_bank import WorldBankDataSource
-from .fred import FREDDataSource
-from .equity import EquityDataSource
+from .base import DataCollectionManager
+from .world_bank import WorldBankProvider, MarketToCountryMapper
+from .fred import FredDataProvider
+from .equity import EquityMarketProvider
 
+# Set up module logger
 logger = logging.getLogger(__name__)
 
 
-class DataPipeline:
+class DataIngestionPipeline:
     """
-    Main pipeline for collecting and processing all data.
+    Orchestrator for the data ingestion and transformation layer.
+    
+    This class is the main entry point for data collection. It manages the
+    lifecycle of data from raw API responses to a cleaned, merged CSV file.
     """
     
     def __init__(
         self,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        markets: Optional[List[str]] = None,
-        cache_dir: Optional[str] = None
+        target_markets: Optional[List[str]] = None,
+        cache_directory: Optional[str] = None
     ):
+        """
+        Initialize the ingestion pipeline.
+        
+        Args:
+            start_date: Beginning of data period (YYYY-MM-DD).
+            end_date: End of data period (YYYY-MM-DD).
+            target_markets: List of market names to include.
+            cache_directory: Directory for raw data storage.
+        """
         self.start_date = start_date or START_DATE
         self.end_date = end_date or END_DATE
-        self.markets = self._parse_markets(markets)
-        self.cache_dir = cache_dir or str(DATA_RAW_PATH)
+        self.markets = self._initialize_market_list(target_markets)
+        self.cache_dir = cache_directory or str(DATA_RAW_PATH)
         
-        self.collector = DataCollector()
-        self.logger = logging.getLogger(__name__)
-        self._register_sources()
+        # Initialize the collection manager and register providers
+        self.manager = DataCollectionManager()
+        self._setup_providers()
         
-    def _parse_markets(self, markets: Optional[List[str]]) -> List[str]:
-        """Parse market specification."""
+    def _initialize_market_list(self, markets: Optional[List[str]]) -> List[str]:
+        """Convert input market specification to a validated list of names."""
         if markets is None or markets == ["all"]:
             return list(MARKETS.keys())
         return markets
     
-    def _register_sources(self):
-        """Register all data sources."""
-        # World Bank - global macro data
-        self.collector.register_source(
+    def _setup_providers(self):
+        """Instantiate and register the specialized data providers."""
+        # 1. World Bank - Global Macroeconomic Data
+        self.manager.register_provider(
             "world_bank",
-            WorldBankDataSource(cache_dir=self.cache_dir)
+            WorldBankProvider(cache_directory=self.cache_dir)
         )
         
-        # FRED - US data and global indicators
-        self.collector.register_source(
+        # 2. FRED - Economic Indicators (US and Global)
+        self.manager.register_provider(
             "fred",
-            FREDDataSource(cache_dir=self.cache_dir)
+            FredDataProvider(cache_directory=self.cache_dir)
         )
         
-        # Equity markets
-        self.collector.register_source(
+        # 3. Equity Markets - Historical Prices and Returns
+        self.manager.register_provider(
             "equity",
-            EquityDataSource(cache_dir=self.cache_dir)
+            EquityMarketProvider(cache_directory=self.cache_dir)
         )
         
-        self.logger.info(f"Registered {len(self.collector.sources)} data sources")
+        logger.info(f"Initialized data pipeline with {len(self.manager.providers)} providers")
     
-    def collect_all(self) -> Dict[str, pd.DataFrame]:
+    def run_collection_sequence(self) -> Dict[str, pd.DataFrame]:
         """
-        Collect data from all sources.
+        Execute the end-to-end collection for all providers.
         
         Returns:
-            Dict[str, pd.DataFrame]: Dictionary of data by source
+            Dict: Collection results keyed by provider ID.
         """
-        self.logger.info("Starting data collection pipeline...")
-        self.logger.info(f"Markets: {self.markets}")
-        self.logger.info(f"Period: {self.start_date} to {self.end_date}")
+        logger.info(f"Starting data collection for markets: {self.markets}")
+        logger.info(f"Time range: {self.start_date} to {self.end_date}")
         
         results = {}
         
-        # 1. Collect World Bank data
+        # 1. Collect Macro data from World Bank
         try:
-            self.logger.info("Collecting World Bank data...")
-            
-            # Get country codes for markets
-            from .world_bank import CountryMapper
-            countries = []
-            for market in self.markets:
-                countries.extend(CountryMapper.get_countries_for_market(market))
-            
-            wb_data = self.collector.collect(
+            country_codes = MarketToCountryMapper.get_all_codes(self.markets)
+            results["world_bank"] = self.manager.collect_from_source(
                 "world_bank",
-                countries=countries,
+                countries=country_codes,
                 start_date=self.start_date,
                 end_date=self.end_date
             )
-            results["world_bank"] = wb_data
-            
         except Exception as e:
-            self.logger.error(f"World Bank collection failed: {str(e)}")
+            logger.warning(f"World Bank collection failed (non-critical): {str(e)}")
             results["world_bank"] = None
-        
-        # 2. Collect FRED data
-        try:
-            self.logger.info("Collecting FRED data...")
             
-            fred_data = self.collector.collect(
+        # 2. Collect Economic indicators from FRED
+        try:
+            results["fred"] = self.manager.collect_from_source(
                 "fred",
                 start_date=self.start_date,
                 end_date=self.end_date,
-                frequency="M"
+                resampling_frequency="ME"
             )
-            results["fred"] = fred_data
-            
         except Exception as e:
-            self.logger.error(f"FRED collection failed: {str(e)}")
+            logger.warning(f"FRED collection failed (non-critical): {str(e)}")
             results["fred"] = None
-        
-        # 3. Collect Equity data
-        try:
-            self.logger.info("Collecting Equity data...")
             
-            equity_data = self.collector.collect(
+        # 3. Collect Price data from Equity Markets
+        try:
+            results["equity"] = self.manager.collect_from_source(
                 "equity",
-                markets=self.markets,
+                target_markets=self.markets,
                 start_date=self.start_date,
                 end_date=self.end_date,
-                frequency="M"
+                frequency="ME"
             )
-            results["equity"] = equity_data
-            
         except Exception as e:
-            self.logger.error(f"Equity collection failed: {str(e)}")
-            results["equity"] = None
-        
-        # Summary
-        for source, data in results.items():
-            if data is not None:
-                self.logger.info(f"✓ {source}: {data.shape}")
-            else:
-                self.logger.warning(f"✗ {source}: FAILED")
-        
+            # Equity data is CRITICAL for the model; we let this exception propagate
+            logger.error(f"CRITICAL: Equity data collection failed: {str(e)}")
+            raise
+            
         return results
     
-    def process(self, raw_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    def transform_and_merge(self, raw_datasets: Dict[str, pd.DataFrame]) -> pd.DataFrame:
         """
-        Process raw data into unified format.
+        Transform raw datasets and merge them into a single analytical table.
         
-        Args:
-            raw_data: Dictionary of DataFrames from different sources
-            
-        Returns:
-            pd.DataFrame: Unified dataset
+        Workflow:
+        - Upsample annual data (World Bank) to monthly.
+        - Handle missing values (forward fill).
+        - Prefix columns to maintain traceability.
+        - Join everything on a monthly date index.
         """
-        self.logger.info("Processing raw data...")
+        logger.info("Transforming and merging raw datasets...")
         
-        processed_data = {}
+        processed_components = {}
         
-        # Process each source
-        for source_name, data in raw_data.items():
-            if data is None or data.empty:
-                continue
+        # Process World Bank (Macro)
+        if raw_datasets.get("world_bank") is not None:
+            wb_data = raw_datasets["world_bank"]
+            # Annual to Monthly: linear interpolation for smooth macro trends
+            wb_monthly = wb_data.resample('ME').interpolate(method='linear')
+            # Limit forward fill to 12 months to avoid stale data propagation
+            processed_components["macro"] = wb_monthly.ffill(limit=12)
             
-            if source_name == "world_bank":
-                processed_data["macro"] = self._process_world_bank(data)
-            elif source_name == "fred":
-                processed_data["us_data"] = self._process_fred(data)
-            elif source_name == "equity":
-                if data.empty:
-                    self.logger.error("Equity data is empty - critical for predictions")
-                    raise ValueError("Equity data collection failed")
-                processed_data["equity"] = data
-        
-        # Combine all sources
-        unified = self._combine_sources(processed_data)
-        
-        self.logger.info(f"Processed data shape: {unified.shape}")
-        return unified
+        # Process FRED
+        if raw_datasets.get("fred") is not None:
+            fred_data = raw_datasets["fred"]
+            # Calculate additional features like yield curve spread
+            if 'yield_10y' in fred_data.columns and 'yield_2y' in fred_data.columns:
+                fred_data['yield_curve_spread'] = fred_data['yield_10y'] - fred_data['yield_2y']
+            processed_components["economic"] = fred_data.ffill(limit=3)
+            
+        # Process Equity
+        if raw_datasets.get("equity") is not None:
+            processed_components["prices"] = raw_datasets["equity"]
+            
+        # Combine all components
+        return self._create_unified_dataset(processed_components)
     
-    def _process_world_bank(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Process World Bank data."""
-        self.logger.info("Processing World Bank data...")
-        
-        # Interpolate annual data to monthly
-        data_monthly = data.resample('M').interpolate(method='linear')
-        
-        # Forward fill any remaining gaps
-        data_monthly = data_monthly.ffill(limit=3)
-        
-        return data_monthly
-    
-    def _process_fred(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Process FRED data."""
-        self.logger.info("Processing FRED data...")
-        
-        # Most FRED data is already monthly, just ensure consistency
-        data = data.resample('M').last()
-        
-        # Calculate yield curve spread if both yields available
-        if 'yield_10y' in data.columns and 'yield_2y' in data.columns:
-            data['yield_curve_spread'] = data['yield_10y'] - data['yield_2y']
-        
-        # Forward fill sparse data
-        data = data.ffill(limit=3)
-        
-        return data
-    
-    def _combine_sources(self, processed_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
-        """Combine all processed data sources."""
-        self.logger.info("Combining data sources...")
-        
-        # Start with a date range
-        date_range = pd.date_range(
+    def _create_unified_dataset(self, components: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+        """Joins multiple DataFrames on a shared monthly index."""
+        # Create a master monthly index
+        master_index = pd.date_range(
             start=self.start_date,
             end=self.end_date,
             freq='ME'
         )
+        unified_df = pd.DataFrame(index=master_index)
         
-        combined = pd.DataFrame(index=date_range)
-        
-        # Join each source
-        for source_name, data in processed_data.items():
-            if data is not None and not data.empty:
-                # Ensure monthly frequency
-                data = data.resample('M').last()
+        for name, component_df in components.items():
+            if component_df is not None and not component_df.empty:
+                # Ensure component has the correct frequency
+                component_df = component_df.resample('ME').last()
                 
-                # Prefix columns with source name
-                data = data.add_prefix(f"{source_name}_")
+                # Add source prefix to column names (e.g., macro_USA_gdp)
+                component_df = component_df.add_prefix(f"{name}_")
                 
-                # Join to combined
-                combined = combined.join(data, how='outer')
+                # Outer join to preserve all dates
+                unified_df = unified_df.join(component_df, how='outer')
         
-        # Clean up
-        combined = combined.dropna(how='all')
-        combined = combined.sort_index()
+        # Clean up rows that are entirely empty
+        unified_df = unified_df.dropna(how='all').sort_index()
         
-        self.logger.info(f"Combined data: {combined.shape[0]} rows, {combined.shape[1]} columns")
-        
-        return combined
+        logger.info(f"Created unified dataset with {unified_df.shape[1]} features across {len(unified_df)} months")
+        return unified_df
     
-    def save(self, data: pd.DataFrame, filename: str = "processed_data.csv"):
-        """Save processed data."""
+    def save_processed_data(self, df: pd.DataFrame, filename: str = "processed_data.csv"):
+        """Save the final cleaned dataset to the processed data directory."""
         output_path = DATA_PROCESSED_PATH / filename
-        data.to_csv(output_path, index=True)
-        self.logger.info(f"Saved processed data to {output_path}")
-    
-    def load(self, filename: str = "processed_data.csv") -> pd.DataFrame:
-        """Load processed data."""
+        df.to_csv(output_path, index=True)
+        logger.info(f"Analytical dataset saved to: {output_path}")
+
+    @classmethod
+    def load_processed_data(cls, filename: str = "processed_data.csv") -> pd.DataFrame:
+        """Load an existing analytical dataset from disk."""
         input_path = DATA_PROCESSED_PATH / filename
-        
         if not input_path.exists():
-            self.logger.error(f"File not found: {input_path}")
+            logger.error(f"Analytical dataset not found at {input_path}")
             return pd.DataFrame()
-        
-        data = pd.read_csv(input_path, index_col=0, parse_dates=True)
-        self.logger.info(f"Loaded processed data: {data.shape}")
-        return data
-
-
-def collect_single_source(source_name: str, **kwargs) -> Optional[pd.DataFrame]:
-    """
-    Collect data from a single source (utility function).
-    
-    Args:
-        source_name: Name of the source (world_bank, fred, equity)
-        **kwargs: Source-specific parameters
-        
-    Returns:
-        DataFrame or None
-    """
-    pipeline = DataPipeline(**kwargs)
-    
-    try:
-        return pipeline.collector.collect(source_name, **kwargs)
-    except Exception as e:
-        logger.error(f"Failed to collect from {source_name}: {str(e)}")
-        return None
+            
+        return pd.read_csv(input_path, index_col=0, parse_dates=True)

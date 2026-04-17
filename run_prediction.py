@@ -3,13 +3,15 @@
 Global Equity Market Return Predictor
 ====================================
 
-A machine learning system for predicting 3-year forward returns in global equity markets
-using macroeconomic indicators.
+An end-to-end machine learning system that predicts 3-year forward returns
+for global equity markets by analyzing macroeconomic and fundamental indicators.
 
-Usage:
-    python run_prediction.py --mode train
-    python run_prediction.py --mode predict --report pdf
-    python run_prediction.py --mode full
+Supported Modes:
+    - collect: Gather raw data from World Bank, FRED, and Yahoo Finance.
+    - features: Engineer technical and economic indicators from raw data.
+    - train: Run walk-forward cross-validation and train final models.
+    - predict: Use trained models to forecast the next 3 years of returns.
+    - full: Run the entire pipeline from collection to prediction.
 """
 
 import argparse
@@ -19,32 +21,25 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-# Add src to path
+# Add the 'src' directory to the Python path to enable module imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from config.settings import LOGGING_CONFIG
-from src.data_collection.pipeline import DataPipeline
-from src.features.pipeline import FeaturePipeline
-from src.models.pipeline import ModelPipeline
+from src.data_collection.pipeline import DataIngestionPipeline
+from src.features.pipeline import FeatureEngineeringPipeline
+from src.models.pipeline import ModelTrainingPipeline
 from src.reporting.generator import ReportGenerator
 
-# Setup logging
+# Configure logging based on project settings
 logging.config.dictConfig(LOGGING_CONFIG)
 logger = logging.getLogger(__name__)
 
 
 def parse_arguments():
-    """Parse command line arguments."""
+    """Defines and parses command-line arguments for the system."""
     parser = argparse.ArgumentParser(
         description="Global Equity Market Return Predictor",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s --mode train              Train models on historical data
-  %(prog)s --mode predict            Generate current predictions
-  %(prog)s --mode full               Run full pipeline
-  %(prog)s --mode predict --report pdf    Generate PDF report
-        """,
     )
 
     parser.add_argument(
@@ -52,7 +47,7 @@ Examples:
         type=str,
         choices=["collect", "features", "train", "predict", "full"],
         default="full",
-        help="Execution mode (default: full)",
+        help="Pipeline execution mode (default: full)",
     )
 
     parser.add_argument(
@@ -67,9 +62,8 @@ Examples:
         "--market",
         type=str,
         nargs="+",
-        choices=["USA", "Europe", "Japan", "UK", "EM", "all"],
         default=["all"],
-        help="Specific markets to process (default: all)",
+        help="Specific markets to analyze (e.g., USA EM). Default: all",
     )
 
     parser.add_argument(
@@ -77,147 +71,168 @@ Examples:
         type=str,
         choices=["linear", "rf", "xgb", "arma", "arima", "ensemble", "all"],
         default="ensemble",
-        help="Model type to use (default: ensemble)",
+        help="Model architecture to utilize (default: ensemble)",
     )
 
     parser.add_argument(
         "--start-date",
         type=str,
-        default=None,
-        help="Start date for data collection (YYYY-MM-DD)",
+        help="Earliest date for historical data (YYYY-MM-DD)",
     )
 
     parser.add_argument(
         "--end-date",
         type=str,
-        default=None,
-        help="End date for data collection (YYYY-MM-DD)",
-    )
-
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose output"
+        help="Latest date for historical data (YYYY-MM-DD)",
     )
 
     return parser.parse_args()
 
 
-def run_data_collection(args):
-    """Execute data collection phase."""
-    logger.info("Starting data collection phase...")
+def execute_data_collection(args):
+    """Orchestrates the retrieval and merging of raw data sources."""
+    logger.info("PHASE 1: Starting data collection and ingestion...")
 
-    pipeline = DataPipeline(
-        start_date=args.start_date, end_date=args.end_date, markets=args.market
+    pipeline = DataIngestionPipeline(
+        start_date=args.start_date, 
+        end_date=args.end_date, 
+        target_markets=args.market
     )
 
-    raw_data = pipeline.collect_all()
-    processed_data = pipeline.process(raw_data)
-    pipeline.save(processed_data)
+    # 1. Fetch raw data from all providers
+    raw_datasets = pipeline.run_collection_sequence()
+    
+    # 2. Transform into a unified analytical format
+    unified_df = pipeline.transform_and_merge(raw_datasets)
+    
+    # 3. Persist to disk
+    pipeline.save_processed_data(unified_df)
 
-    logger.info("Data collection completed successfully")
-    return processed_data
-
-
-def run_feature_engineering(args):
-    """Execute feature engineering phase."""
-    logger.info("Starting feature engineering phase...")
-
-    pipeline = FeaturePipeline(markets=args.market)
-
-    features = pipeline.create_features()
-    targets = pipeline.create_targets()
-    dataset = pipeline.merge_features_targets(features, targets)
-
-    pipeline.save(dataset)
-
-    logger.info("Feature engineering completed successfully")
-    return dataset
+    logger.info("Data collection completed successfully.")
+    return unified_df
 
 
-def run_model_training(args):
-    """Execute model training phase."""
-    logger.info("Starting model training phase...")
+def execute_feature_engineering(args):
+    """Orchestrates the creation of indicators and training labels."""
+    logger.info("PHASE 2: Starting feature engineering and labeling...")
 
-    pipeline = ModelPipeline(model_type=args.model, markets=args.market)
+    pipeline = FeatureEngineeringPipeline(target_markets=args.market)
 
-    results = pipeline.train()
-    pipeline.save_models()
-    pipeline.evaluate(results)
+    # 1. Create the feature matrix
+    features = pipeline.engineer_all_features()
+    
+    # 2. Create the target variables (ground truth)
+    targets = pipeline.engineer_target_variables()
+    
+    # 3. Merge and align for training
+    final_dataset = pipeline.merge_and_filter_final_dataset(features, targets)
 
-    logger.info("Model training completed successfully")
+    # 4. Save the finalized training set
+    pipeline.save_features(final_dataset)
+
+    logger.info("Feature engineering completed successfully.")
+    return final_dataset
+
+
+def execute_model_training(args):
+    """Orchestrates model training and performance validation."""
+    logger.info("PHASE 3: Starting model training and cross-validation...")
+
+    pipeline = ModelTrainingPipeline(
+        model_selection=args.model, 
+        target_markets=args.market
+    )
+
+    # 1. Run the training cycle with walk-forward validation
+    results = pipeline.execute_training_cycle()
+    
+    # 2. Persist the trained model objects
+    pipeline.save_trained_models()
+    
+    # 3. Log the performance summary
+    pipeline.print_evaluation_summary(results)
+
+    logger.info("Model training completed successfully.")
     return results
 
 
-def run_prediction(args):
-    """Execute prediction phase."""
-    logger.info("Starting prediction phase...")
+def execute_prediction(args):
+    """Generates return forecasts using the most recent available data."""
+    logger.info("PHASE 4: Generating future return forecasts...")
 
-    pipeline = ModelPipeline(model_type=args.model, markets=args.market)
+    pipeline = ModelTrainingPipeline(
+        model_selection=args.model, 
+        target_markets=args.market
+    )
 
-    predictions = pipeline.predict()
+    # Use existing models to forecast based on latest features
+    forecasts = pipeline.generate_forecasts()
 
-    logger.info("Prediction completed successfully")
-    return predictions
+    logger.info("Forecast generation completed successfully.")
+    return forecasts
 
 
-def generate_report(args, predictions):
-    """Generate output report."""
-    if args.report == "none":
+def generate_report(args, forecasts):
+    """Translates raw forecasts into a human-readable report."""
+    if args.report == "none" or not forecasts:
         return
 
-    logger.info(f"Generating {args.report} report...")
+    logger.info(f"PHASE 5: Generating {args.report} outlook report...")
 
-    generator = ReportGenerator(format=args.report, markets=args.market)
+    # The report generator takes care of the visualization logic
+    generator = ReportGenerator(output_format=args.report, target_markets=args.market)
 
     if args.report == "console":
-        generator.generate_console_report(predictions)
+        generator.generate_console_report(forecasts)
     elif args.report == "pdf":
-        generator.generate_pdf_report(predictions)
+        generator.generate_pdf_report(forecasts)
     elif args.report == "html":
-        generator.generate_html_report(predictions)
+        generator.generate_html_report(forecasts)
 
-    logger.info("Report generation completed")
+    logger.info("Report delivery completed.")
 
 
 def main():
-    """Main execution function."""
+    """Main system entry point."""
     args = parse_arguments()
 
-    if args.verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
-
+    # Log system header
     logger.info("=" * 60)
-    logger.info("Global Equity Market Return Predictor")
-    logger.info(f"Execution mode: {args.mode}")
+    logger.info("GLOBAL EQUITY MARKET PREDICTION SYSTEM")
+    logger.info(f"Mode: {args.mode.upper()} | Model: {args.model.upper()}")
     logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 60)
 
     try:
+        # Routing based on selected mode
         if args.mode == "collect":
-            run_data_collection(args)
+            execute_data_collection(args)
 
         elif args.mode == "features":
-            run_feature_engineering(args)
+            execute_feature_engineering(args)
 
         elif args.mode == "train":
-            run_model_training(args)
+            execute_model_training(args)
 
         elif args.mode == "predict":
-            predictions = run_prediction(args)
-            generate_report(args, predictions)
+            forecasts = execute_prediction(args)
+            generate_report(args, forecasts)
 
         elif args.mode == "full":
-            # Run complete pipeline
-            run_data_collection(args)
-            dataset = run_feature_engineering(args)
-            results = run_model_training(args)
-            predictions = run_prediction(args)
-            generate_report(args, predictions)
+            # Execute the entire end-to-end pipeline
+            execute_data_collection(args)
+            execute_feature_engineering(args)
+            execute_model_training(args)
+            forecasts = execute_prediction(args)
+            generate_report(args, forecasts)
 
-        logger.info("Execution completed successfully!")
+        logger.info("Pipeline execution finished successfully.")
         return 0
 
     except Exception as e:
-        logger.error(f"Execution failed: {str(e)}", exc_info=True)
+        logger.critical(f"Pipeline crashed due to an unhandled exception: {str(e)}")
+        # Log the full stack trace for debugging if in verbose mode
+        logger.debug("Stack Trace:", exc_info=True)
         return 1
 
 

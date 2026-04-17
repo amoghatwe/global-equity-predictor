@@ -462,7 +462,3 @@ MIT License - Free for educational and commercial use with attribution.
 Built as a starter project for long-only asset management opportunities.
 For questions or extensions, see the code documentation and docstrings.
 Reach out to me via my email: [amoghatwe@gmail.com](mailto:amoghatwe@gmail.com)
-
----
-
-**Remember**: "In investing, what is comfortable is rarely profitable." - Robert Arnott

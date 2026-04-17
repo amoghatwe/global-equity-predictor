@@ -421,6 +421,8 @@ predictions = pipeline.predict()
 - [ ] Implement feature selection (RFE, SHAP)
 - [ ] Add confidence intervals to predictions
 - [ ] Create backtesting framework
+- [ ] Improve the reports
+- [ ] Increase time-frame and improve 
 
 ### Medium Term
 - [ ] Add sector-level predictions
