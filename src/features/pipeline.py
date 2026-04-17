@@ -1,9 +1,15 @@
 """
-Feature engineering pipeline for creating ML features.
+Feature Engineering Pipeline.
+
+This module transforms processed time series data into analytical features
+ready for machine learning models. It engineers indicators across several
+categories: valuation, economic growth, inflation, interest rates, credit,
+and momentum.
 """
+
 import pandas as pd
 import numpy as np
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple, Union
 from datetime import datetime
 import logging
 from pathlib import Path
@@ -16,351 +22,359 @@ from config.settings import (
     FEATURE_CATEGORIES
 )
 
+# Set up module logger
 logger = logging.getLogger(__name__)
 
 
-class FeaturePipeline:
+class FeatureEngineeringPipeline:
     """
-    Pipeline for engineering features from raw data.
+    Orchestrates the creation of features and target variables.
+    
+    This pipeline takes cleaned monthly data and applies various statistical
+    transformations (rolling windows, percentage changes, deviations) to
+    generate the final dataset used for model training and prediction.
     """
     
     def __init__(
         self,
-        markets: Optional[List[str]] = None,
-        processed_data_path: Optional[str] = None
+        target_markets: Optional[List[str]] = None,
+        processed_data_dir: Optional[Union[str, Path]] = None
     ):
-        self.markets = self._parse_markets(markets)
-        self.processed_data_path = processed_data_path or DATA_PROCESSED_PATH
-        self.features_path = DATA_FEATURES_PATH
+        """
+        Initialize the feature pipeline.
         
-        self.processed_data: Optional[pd.DataFrame] = None
-        self.features: Optional[pd.DataFrame] = None
-        self.targets: Optional[pd.DataFrame] = None
+        Args:
+            target_markets: Markets to generate features for.
+            processed_data_dir: Source directory for cleaned data.
+        """
+        self.markets = self._initialize_markets(target_markets)
+        self.processed_data_dir = Path(processed_data_dir or DATA_PROCESSED_PATH)
+        self.output_dir = Path(DATA_FEATURES_PATH)
+        
+        # State storage
+        self.input_dataset: Optional[pd.DataFrame] = None
+        self.engineered_features: Optional[pd.DataFrame] = None
+        self.target_variables: Optional[pd.DataFrame] = None
         
         self.logger = logging.getLogger(__name__)
         
-    def _parse_markets(self, markets: Optional[List[str]]) -> List[str]:
-        """Parse market specification."""
+    def _initialize_markets(self, markets: Optional[List[str]]) -> List[str]:
+        """Validate and return the list of target markets."""
         if markets is None or markets == ["all"]:
             return list(MARKETS.keys())
         return markets
     
-    def load_processed_data(self, filename: str = "processed_data.csv"):
-        """Load processed data from file."""
-        file_path = Path(self.processed_data_path) / filename
+    def load_input_data(self, filename: str = "processed_data.csv") -> bool:
+        """
+        Load the cleaned dataset from the processed directory.
+        
+        Returns:
+            bool: True if loading was successful.
+        """
+        file_path = self.processed_data_dir / filename
         
         if not file_path.exists():
-            self.logger.error(f"Processed data not found: {file_path}")
+            self.logger.error(f"Required dataset not found: {file_path}")
             return False
         
-        self.processed_data = pd.read_csv(file_path, index_col=0, parse_dates=True)
-        self.logger.info(f"Loaded processed data: {self.processed_data.shape}")
+        self.input_dataset = pd.read_csv(file_path, index_col=0, parse_dates=True)
+        self.logger.info(f"Successfully loaded dataset: {self.input_dataset.shape}")
         return True
     
-    def create_features(self) -> pd.DataFrame:
+    def engineer_all_features(self) -> pd.DataFrame:
         """
-        Create all features from processed data.
+        Main entry point for feature engineering.
+        
+        Transforms raw columns into analytical indicators across multiple categories.
         
         Returns:
-            pd.DataFrame: Feature matrix
+            pd.DataFrame: The complete feature matrix.
         """
-        self.logger.info("Creating features...")
+        self.logger.info("Starting feature engineering process...")
         
-        if self.processed_data is None:
-            if not self.load_processed_data():
+        if self.input_dataset is None:
+            if not self.load_input_data():
                 return pd.DataFrame()
         
-        features_dict = {}
+        # We group indicators by their economic category
+        feature_sets = {}
         
-        # 1. Valuation features
-        self.logger.info("Creating valuation features...")
-        valuation = self._create_valuation_features()
-        if not valuation.empty:
-            features_dict['valuation'] = valuation
+        # 1. Valuation: Is the market cheap or expensive relative to history?
+        self.logger.info("  - Engineering valuation indicators...")
+        valuation_df = self._engineer_valuation_indicators()
+        if not valuation_df.empty:
+            feature_sets['valuation'] = valuation_df
         
-        # 2. Growth features
-        self.logger.info("Creating growth features...")
-        growth = self._create_growth_features()
-        if not growth.empty:
-            features_dict['growth'] = growth
+        # 2. Growth: Are economies expanding or contracting?
+        self.logger.info("  - Engineering economic growth indicators...")
+        growth_df = self._engineer_growth_indicators()
+        if not growth_df.empty:
+            feature_sets['growth'] = growth_df
         
-        # 3. Inflation features
-        self.logger.info("Creating inflation features...")
-        inflation = self._create_inflation_features()
-        if not inflation.empty:
-            features_dict['inflation'] = inflation
+        # 3. Inflation: What is the purchasing power trend?
+        self.logger.info("  - Engineering inflation indicators...")
+        inflation_df = self._engineer_inflation_indicators()
+        if not inflation_df.empty:
+            feature_sets['inflation'] = inflation_df
         
-        # 4. Interest rate features
-        self.logger.info("Creating interest rate features...")
-        rates = self._create_rate_features()
-        if not rates.empty:
-            features_dict['rates'] = rates
+        # 4. Rates: What is the cost of capital?
+        self.logger.info("  - Engineering interest rate indicators...")
+        rates_df = self._engineer_rate_indicators()
+        if not rates_df.empty:
+            feature_sets['rates'] = rates_df
         
-        # 5. Credit features
-        self.logger.info("Creating credit features...")
-        credit = self._create_credit_features()
-        if not credit.empty:
-            features_dict['credit'] = credit
+        # 5. Credit: Is liquidity increasing or decreasing?
+        self.logger.info("  - Engineering credit and liquidity indicators...")
+        credit_df = self._engineer_credit_indicators()
+        if not credit_df.empty:
+            feature_sets['credit'] = credit_df
         
-        # 6. Momentum features
-        self.logger.info("Creating momentum features...")
-        momentum = self._create_momentum_features()
-        if not momentum.empty:
-            features_dict['momentum'] = momentum
+        # 6. Momentum: What are the recent price trends?
+        self.logger.info("  - Engineering market momentum indicators...")
+        momentum_df = self._engineer_momentum_indicators()
+        if not momentum_df.empty:
+            feature_sets['momentum'] = momentum_df
         
-        # Combine all features
-        if not features_dict:
-            self.logger.error("No features created")
+        # Merge all generated indicator sets
+        if not feature_sets:
+            self.logger.error("No features were successfully generated.")
             return pd.DataFrame()
         
-        # Start with first feature set
-        combined = list(features_dict.values())[0]
+        # Start with the first available set and join the rest
+        feature_matrix = list(feature_sets.values())[0]
+        for name, df in list(feature_sets.items())[1:]:
+            feature_matrix = feature_matrix.join(df, how='outer')
         
-        # Join remaining
-        for name, df in list(features_dict.items())[1:]:
-            combined = combined.join(df, how='outer')
+        # Final cleanup: sort and remove empty rows
+        self.engineered_features = feature_matrix.dropna(how='all').sort_index()
+        self.logger.info(f"Generated {len(self.engineered_features.columns)} features.")
         
-        # Clean up
-        combined = combined.dropna(how='all')
-        combined = combined.sort_index()
-        
-        self.features = combined
-        self.logger.info(f"Created {len(combined.columns)} features across {len(combined)} periods")
-        
-        return combined
+        return self.engineered_features
     
-    def _create_valuation_features(self) -> pd.DataFrame:
-        """Create valuation-based features."""
-        features = pd.DataFrame(index=self.processed_data.index)
-        data = self.processed_data
+    def _engineer_valuation_indicators(self) -> pd.DataFrame:
+        """
+        Creates indicators that measure price levels relative to historical norms.
+        """
+        features = pd.DataFrame(index=self.input_dataset.index)
+        data = self.input_dataset
         
         for market in self.markets:
-            # Try to find price data
-            price_col = f"equity_{market}"
+            price_col = f"prices_{market}"
             
             if price_col in data.columns:
                 prices = data[price_col]
                 
-                # Price-to-moving average (momentum/valuation hybrid)
+                # Price relative to Moving Averages (MA)
+                # This shows if the market is overextended relative to its recent past
                 for window in [12, 36, 60]:
-                    ma = prices.rolling(window=window).mean()
-                    features[f"{market}_price_ma{window}_ratio"] = prices / ma
+                    # Use min_periods to handle shorter history (e.g., EM, Europe)
+                    ma = prices.rolling(window=window, min_periods=min(window, 12)).mean()
+                    features[f"{market}_price_to_ma{window}"] = prices / ma
                 
-                # Long-term trend deviation (avoid division by zero)
-                long_ma = prices.rolling(window=60).mean()
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    features[f"{market}_price_deviation_60m"] = np.where(
-                        long_ma != 0,
-                        (prices - long_ma) / long_ma * 100,
-                        np.nan
-                    )
+                # Long-term trend deviation (%)
+                # Use a smaller min_periods to allow 3+ years of data to be used
+                long_term_trend = prices.rolling(window=120, min_periods=36).mean() # 10-year trend
+                features[f"{market}_trend_deviation"] = (prices - long_term_trend) / long_term_trend * 100
         
         return features
     
-    def _create_growth_features(self) -> pd.DataFrame:
-        """Create economic growth features."""
-        features = pd.DataFrame(index=self.processed_data.index)
-        data = self.processed_data
+    def _engineer_growth_indicators(self) -> pd.DataFrame:
+        """
+        Creates indicators based on economic output and production.
+        """
+        features = pd.DataFrame(index=self.input_dataset.index)
+        data = self.input_dataset
         
-        # GDP growth trends
+        # Look for macro-economic columns (from World Bank)
         for col in data.columns:
-            if 'gdp_growth' in col:
-                # Trend (3-year moving average)
-                features[f"{col}_trend"] = data[col].rolling(36).mean()
-                
-                # Deviation from trend
-                trend = data[col].rolling(36).mean()
-                features[f"{col}_deviation"] = data[col] - trend
-                
-                # Year-over-year change
-                features[f"{col}_yoy_change"] = data[col].diff(12)
+            if 'macro_' in col and 'gdp_real_growth' in col:
+                # 3-year smoothed trend
+                features[f"{col}_smoothed"] = data[col].rolling(window=36, min_periods=12).mean()
+                # Momentum of growth
+                features[f"{col}_momentum"] = data[col].diff(12)
         
-        # Industrial production
-        for col in data.columns:
-            if 'industrial_production' in col:
-                features[f"{col}_growth"] = data[col].pct_change(12) * 100
-                features[f"{col}_trend"] = data[col].rolling(36).mean()
+            if 'macro_' in col and 'industrial_production' in col:
+                # Year-over-year change in production
+                features[f"{col}_yoy"] = data[col].pct_change(12) * 100
         
         return features
     
-    def _create_inflation_features(self) -> pd.DataFrame:
-        """Create inflation-related features."""
-        features = pd.DataFrame(index=self.processed_data.index)
-        data = self.processed_data
+    def _engineer_inflation_indicators(self) -> pd.DataFrame:
+        """
+        Creates indicators related to price stability and real rates.
+        """
+        features = pd.DataFrame(index=self.input_dataset.index)
+        data = self.input_dataset
         
-        # CPI inflation
         for col in data.columns:
-            if 'cpi_yoy' in col or 'inflation' in col:
-                # Inflation level
+            if 'inflation' in col.lower():
                 features[f"{col}_level"] = data[col]
-                
-                # Inflation trend (3-year)
-                features[f"{col}_trend"] = data[col].rolling(36).mean()
-                
-                # Inflation deviation from trend
-                trend = data[col].rolling(36).mean()
-                features[f"{col}_deviation"] = data[col] - trend
+                features[f"{col}_trend"] = data[col].rolling(window=24, min_periods=12).mean()
+                features[f"{col}_acceleration"] = data[col].diff(12)
         
-        # Real interest rates
-        if 'us_data_yield_10y' in data.columns:
-            for col in data.columns:
-                if 'inflation' in col.lower() and col in data.columns:
-                    inflation_data = data[col]
-                    if inflation_data is not None and not inflation_data.empty:
-                        features['real_rate_10y'] = data['us_data_yield_10y'] - inflation_data
-                        break
+        # Real Interest Rate (10Y Yield - Inflation)
+        # Note: Using US inflation as global proxy if local not available
+        if 'economic_yield_10y' in data.columns:
+            # Try to find a US inflation column
+            us_inflation_col = [c for c in data.columns if 'cpi' in c.lower() and 'usa' in c.lower()]
+            if us_inflation_col:
+                features['global_real_rate'] = data['economic_yield_10y'] - data[us_inflation_col[0]]
         
         return features
     
-    def _create_rate_features(self) -> pd.DataFrame:
-        """Create interest rate features."""
-        features = pd.DataFrame(index=self.processed_data.index)
-        data = self.processed_data
+    def _engineer_rate_indicators(self) -> pd.DataFrame:
+        """
+        Creates indicators derived from the yield curve and policy rates.
+        """
+        features = pd.DataFrame(index=self.input_dataset.index)
+        data = self.input_dataset
         
-        # US rates (most important globally)
-        if 'us_data_yield_10y' in data.columns:
-            features['us_yield_10y_level'] = data['us_data_yield_10y']
-            features['us_yield_10y_trend'] = data['us_data_yield_10y'].rolling(36).mean()
-            features['us_yield_10y_change_12m'] = data['us_data_yield_10y'].diff(12)
+        # US Yield Curve Spread (10Y - 2Y)
+        if 'economic_yield_curve_spread' in data.columns:
+            features['yield_curve_slope'] = data['economic_yield_curve_spread']
+            features['yield_curve_change_6m'] = data['economic_yield_curve_spread'].diff(6)
         
-        if 'us_data_fed_funds' in data.columns:
-            features['fed_funds_level'] = data['us_data_fed_funds']
-            features['fed_funds_change_12m'] = data['us_data_fed_funds'].diff(12)
-        
-        # Yield curve
-        if 'us_data_yield_curve_spread' in data.columns:
-            features['yield_curve_spread'] = data['us_data_yield_curve_spread']
-            features['yield_curve_spread_change_12m'] = data['us_data_yield_curve_spread'].diff(12)
-        elif 'us_data_yield_10y' in data.columns and 'us_data_yield_2y' in data.columns:
-            spread = data['us_data_yield_10y'] - data['us_data_yield_2y']
-            features['yield_curve_spread'] = spread
-            features['yield_curve_spread_change_12m'] = spread.diff(12)
+        # Policy Rate (Fed Funds)
+        if 'economic_fed_funds' in data.columns:
+            features['interest_rate_level'] = data['economic_fed_funds']
+            features['interest_rate_change_12m'] = data['economic_fed_funds'].diff(12)
         
         return features
     
-    def _create_credit_features(self) -> pd.DataFrame:
-        """Create credit/money supply features."""
-        features = pd.DataFrame(index=self.processed_data.index)
-        data = self.processed_data
+    def _engineer_credit_indicators(self) -> pd.DataFrame:
+        """
+        Creates indicators related to liquidity and money supply.
+        """
+        features = pd.DataFrame(index=self.input_dataset.index)
+        data = self.input_dataset
         
-        # M2 growth
+        # M2 Money Supply Growth
         for col in data.columns:
             if 'm2' in col.lower():
-                features[f"{col}_growth_12m"] = data[col].pct_change(12) * 100
-                features[f"{col}_growth_trend"] = data[col].pct_change(12).rolling(36).mean() * 100
-        
+                features[f"{col}_growth"] = data[col].pct_change(12) * 100
+                
         # Credit to GDP
         for col in data.columns:
-            if 'credit' in col.lower():
+            if 'credit_to_gdp' in col:
                 features[f"{col}_level"] = data[col]
-                features[f"{col}_change_12m"] = data[col].diff(12)
+                features[f"{col}_change"] = data[col].diff(12)
         
         return features
     
-    def _create_momentum_features(self) -> pd.DataFrame:
-        """Create momentum/volatility features."""
-        features = pd.DataFrame(index=self.processed_data.index)
-        data = self.processed_data
+    def _engineer_momentum_indicators(self) -> pd.DataFrame:
+        """
+        Creates technical and sentiment indicators like trailing returns and volatility.
+        """
+        features = pd.DataFrame(index=self.input_dataset.index)
+        data = self.input_dataset
         
         for market in self.markets:
-            price_col = f"equity_{market}"
+            price_col = f"prices_{market}"
             
             if price_col in data.columns:
                 prices = data[price_col]
                 
-                # Trailing returns
-                for months in [1, 3, 6, 12]:
-                    returns = prices.pct_change(months) * 100
-                    features[f"{market}_return_{months}m"] = returns
+                # Trailing returns for multiple horizons
+                for m in [3, 6, 12]:
+                    features[f"{market}_momentum_{m}m"] = prices.pct_change(m) * 100
                 
-                # Volatility
-                monthly_returns = prices.pct_change()
-                for window in [6, 12]:
-                    vol = monthly_returns.rolling(window).std() * np.sqrt(12) * 100
-                    features[f"{market}_volatility_{window}m"] = vol
+                # Realized Volatility (Rolling standard deviation of returns)
+                returns = prices.pct_change()
+                features[f"{market}_volatility_12m"] = returns.rolling(window=12, min_periods=6).std() * np.sqrt(12) * 100
         
-        # VIX (market fear)
-        if 'us_data_vix' in data.columns:
-            features['vix_level'] = data['us_data_vix']
-            features['vix_trend'] = data['us_data_vix'].rolling(12).mean()
+        # VIX Index (Global fear gauge)
+        if 'economic_vix' in data.columns:
+            features['market_vol_vix'] = data['economic_vix']
+            features['vix_trend_deviation'] = data['economic_vix'] - data['economic_vix'].rolling(window=12, min_periods=6).mean()
         
         return features
     
-    def create_targets(self) -> pd.DataFrame:
+    def engineer_target_variables(self) -> pd.DataFrame:
         """
-        Create target variables (forward returns).
+        Creates the 'ground truth' labels: 3-year annualized forward returns.
         
         Returns:
-            pd.DataFrame: Target matrix
+            pd.DataFrame: A matrix of targets for each market.
         """
-        self.logger.info("Creating target variables...")
+        self.logger.info("Engineering target variables (3Y Forward Returns)...")
         
-        if self.processed_data is None:
-            if not self.load_processed_data():
+        if self.input_dataset is None:
+            if not self.load_input_data():
                 return pd.DataFrame()
         
-        targets = pd.DataFrame(index=self.processed_data.index)
-        data = self.processed_data
+        targets_df = pd.DataFrame(index=self.input_dataset.index)
+        data = self.input_dataset
         
         for market in self.markets:
-            price_col = f"equity_{market}"
+            price_col = f"prices_{market}"
             
             if price_col in data.columns:
                 prices = data[price_col]
                 
-                # Calculate forward returns (target)
-                future_price = prices.shift(-FORECAST_HORIZON_MONTHS)
-                total_return = (future_price / prices) - 1
+                # Forward-looking calculation:
+                # We look at the price 36 months in the future
+                future_prices = prices.shift(-FORECAST_HORIZON_MONTHS)
+                total_return = (future_prices / prices) - 1
                 
-                # Annualize
+                # Annualize the total return
+                # Formula: (1 + r)^(1/3) - 1
                 annualized_return = ((1 + total_return) ** (12 / FORECAST_HORIZON_MONTHS)) - 1
                 
-                targets[f"{market}_return_3y"] = annualized_return * 100
+                # Store as percentage
+                col_name = f"{market}_target_return"
+                targets_df[col_name] = annualized_return * 100
                 
-                self.logger.info(f"Created target for {market}: "
-                                f"{targets[f'{market}_return_3y'].notna().sum()} valid observations")
+                valid_count = targets_df[col_name].notna().sum()
+                self.logger.info(f"  - Created {col_name}: {valid_count} training labels.")
         
-        self.targets = targets
-        return targets
+        self.target_variables = targets_df
+        return targets_df
     
-    def merge_features_targets(self, features: pd.DataFrame, targets: pd.DataFrame) -> pd.DataFrame:
+    def merge_and_filter_final_dataset(
+        self, 
+        features: pd.DataFrame, 
+        targets: pd.DataFrame
+    ) -> pd.DataFrame:
         """
-        Merge features and targets into training dataset.
+        Joins features and targets, removing dates that lack training labels.
         
         Args:
-            features: Feature DataFrame
-            targets: Target DataFrame
+            features: Engineered feature matrix.
+            targets: Target return matrix.
             
         Returns:
-            pd.DataFrame: Combined dataset with targets
+            pd.DataFrame: Cleaned training dataset.
         """
-        self.logger.info("Merging features and targets...")
+        self.logger.info("Merging features and targets for final training set...")
         
-        # Align dates
-        combined = features.join(targets, how='inner')
+        # Align by date index
+        combined_dataset = features.join(targets, how='inner')
         
-        # Drop rows where any target is missing
-        target_cols = [col for col in combined.columns if '_return_3y' in col]
-        combined = combined.dropna(subset=target_cols, how='any')
+        # Remove rows where all targets are missing (these are the most recent months
+        # for which we don't yet know the 3-year future return)
+        initial_len = len(combined_dataset)
+        combined_dataset = combined_dataset.dropna(subset=targets.columns, how='all')
         
-        self.logger.info(f"Final dataset: {len(combined)} rows, {len(combined.columns)} columns")
+        self.logger.info(
+            f"Final analytical dataset created: {len(combined_dataset)} rows, "
+            f"{len(combined_dataset.columns)} columns. "
+            f"({initial_len - len(combined_dataset)} future rows reserved for prediction)"
+        )
         
-        return combined
+        return combined_dataset
     
-    def save(self, data: pd.DataFrame, filename: str = "features.csv"):
-        """Save features data."""
-        output_path = self.features_path / filename
-        data.to_csv(output_path, index=True)
-        self.logger.info(f"Saved features to {output_path}")
-    
-    def load(self, filename: str = "features.csv") -> pd.DataFrame:
-        """Load features data."""
-        input_path = self.features_path / filename
-        
+    def save_features(self, df: pd.DataFrame, filename: str = "features.csv"):
+        """Save the engineered dataset to the features directory."""
+        output_path = self.output_dir / filename
+        df.to_csv(output_path, index=True)
+        self.logger.info(f"Feature matrix saved to: {output_path}")
+
+    @classmethod
+    def load_features(cls, filename: str = "features.csv") -> pd.DataFrame:
+        """Load an existing feature matrix from disk."""
+        input_path = Path(DATA_FEATURES_PATH) / filename
         if not input_path.exists():
-            self.logger.error(f"Features not found: {input_path}")
+            logger.error(f"Feature matrix not found at {input_path}")
             return pd.DataFrame()
-        
-        data = pd.read_csv(input_path, index_col=0, parse_dates=True)
-        self.logger.info(f"Loaded features: {data.shape}")
-        return data
+            
+        return pd.read_csv(input_path, index_col=0, parse_dates=True)

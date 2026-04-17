@@ -252,9 +252,9 @@ class TestReporting:
         generator = ReportGenerator()
 
         # Low std = high confidence
-        assert generator._calculate_confidence(0.5) == "High"
-        assert generator._calculate_confidence(1.5) == "Medium"
-        assert generator._calculate_confidence(3.0) == "Low"
+        assert generator._determine_confidence_level(0.5) == "High"
+        assert generator._determine_confidence_level(1.5) == "Medium"
+        assert generator._determine_confidence_level(3.0) == "Low"
 
 
 class TestIntegration:

@@ -136,15 +136,15 @@ ARIMA_PARAMS = {
 
 # World Bank indicators
 WB_INDICATORS = {
-    "gdp_current_usd": "NY.GDP.MKTP.CD",
-    "gdp_real_growth": "NY.GDP.MKTP.KD.ZG",
-    "gdp_per_capita": "NY.GDP.PCAP.CD",
-    "inflation_cpi": "FP.CPI.TOTL.ZG",
-    "industrial_production": "NV.IND.TOTL.ZS",
-    "broad_money_m2": "FM.LBL.BMNY.GD.ZS",
-    "credit_to_gdp": "GFDD.DI.14",
-    "population_total": "SP.POP.TOTL",
-    "population_65plus": "SP.POP.65UP.TO.ZS",
+    "NY.GDP.MKTP.CD": "gdp_current_usd",
+    "NY.GDP.MKTP.KD.ZG": "gdp_real_growth",
+    "NY.GDP.PCAP.CD": "gdp_per_capita",
+    "FP.CPI.TOTL.ZG": "inflation_cpi",
+    "NV.IND.TOTL.ZS": "industrial_production",
+    "FM.LBL.BMNY.GD.ZS": "broad_money_m2",
+    "GFDD.DI.14": "credit_to_gdp",
+    "SP.POP.TOTL": "population_total",
+    "SP.POP.65UP.TO.ZS": "population_65plus",
 }
 
 # FRED series codes
