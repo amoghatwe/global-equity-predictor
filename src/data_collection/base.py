@@ -80,53 +80,6 @@ class BaseDataProvider(ABC):
             bool: True if the data meets quality standards, False otherwise.
         """
         pass
-    
-    def cache_dataset(self, data: pd.DataFrame, filename: str) -> bool:
-        """
-        Save a DataFrame to a local CSV file for faster subsequent loads.
-        
-        Args:
-            data: DataFrame to save.
-            filename: Name of the cache file (e.g., "fred_raw.csv").
-            
-        Returns:
-            bool: True if saving was successful.
-        """
-        if not self.cache_directory:
-            return False
-            
-        try:
-            self.cache_directory.mkdir(parents=True, exist_ok=True)
-            file_path = self.cache_directory / filename
-            data.to_csv(file_path, index=True)
-            self.logger.info(f"Successfully cached data to {file_path}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to cache data to {filename}: {str(e)}")
-            return False
-    
-    def load_cached_dataset(self, filename: str) -> Optional[pd.DataFrame]:
-        """
-        Load a previously cached dataset from disk.
-        
-        Args:
-            filename: Name of the cache file.
-            
-        Returns:
-            pd.DataFrame or None: The loaded data if found and valid.
-        """
-        if not self.cache_directory:
-            return None
-            
-        file_path = self.cache_directory / filename
-        if file_path.exists():
-            try:
-                self.logger.info(f"Loading cached data from {file_path}")
-                return pd.read_csv(file_path, index_col=0, parse_dates=True)
-            except Exception as e:
-                self.logger.warning(f"Failed to read cache file {file_path}: {str(e)}")
-        
-        return None
 
 
 class DataCollectionManager:
@@ -192,27 +145,3 @@ class DataCollectionManager:
             error_msg = f"Data validation failed for source '{provider_id}'"
             self.logger.error(error_msg)
             raise ValueError(error_msg)
-    
-    def collect_all_sources(self, **kwargs) -> Dict[str, Optional[pd.DataFrame]]:
-        """
-        Iterate through all registered providers and collect their data.
-        
-        This method is 'fault-tolerant' - if one provider fails, it logs the
-        error and continues with the others rather than crashing the whole process.
-        
-        Args:
-            **kwargs: Global parameters passed to all providers.
-            
-        Returns:
-            Dict: Mapping of provider IDs to their respective DataFrames (or None on failure).
-        """
-        collection_results = {}
-        
-        for provider_id in self.providers:
-            try:
-                collection_results[provider_id] = self.collect_from_source(provider_id, **kwargs)
-            except Exception as collection_error:
-                self.logger.error(f"Batch collection failed for '{provider_id}': {str(collection_error)}")
-                collection_results[provider_id] = None
-                
-        return collection_results

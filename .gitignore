@@ -1,2 +1,15 @@
+# Secrets
 .env
+
+# Virtualenv
+venv/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Generated artifacts (rebuilt by running the pipeline)
+data/
+logs/
 reports/
+*.log

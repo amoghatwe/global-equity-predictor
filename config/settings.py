@@ -3,6 +3,7 @@ Configuration settings for Global Equity Market Return Predictor.
 """
 
 import os
+from datetime import date
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -28,7 +29,9 @@ FRED_API_KEY = os.getenv("FRED_API_KEY")
 
 # Date ranges
 START_DATE = "1980-01-01"
-END_DATE = "2024-12-31"
+# Default to today's date so data is always pulled through the current run;
+# can be overridden via the END_DATE environment variable (YYYY-MM-DD).
+END_DATE = os.getenv("END_DATE", date.today().isoformat())
 
 # Forecast horizon (in months)
 FORECAST_HORIZON_MONTHS = 36

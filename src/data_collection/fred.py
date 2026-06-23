@@ -181,22 +181,3 @@ class FredDataProvider(BaseDataProvider):
             self.logger.warning(f"FRED data might be stale. Last observation is from {days_ago} days ago.")
             
         return True
-    
-    def search_for_series(self, query: str, result_limit: int = 5) -> pd.DataFrame:
-        """
-        Utility to search for FRED series IDs by keyword.
-        
-        Args:
-            query: Search term (e.g., "interest rates").
-            result_limit: Max number of results to return.
-            
-        Returns:
-            pd.DataFrame: Matching series with their IDs and metadata.
-        """
-        try:
-            client = self._get_client()
-            results = client.search(query, limit=result_limit)
-            return results[['title', 'id', 'frequency', 'units']]
-        except Exception as e:
-            self.logger.error(f"Search failed: {str(e)}")
-            return pd.DataFrame()

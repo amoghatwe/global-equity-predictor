@@ -155,27 +155,6 @@ class LinearReturnModel(BaseReturnModel):
 
         return self.model.predict(X_filled)
 
-    def get_coefficients(self) -> pd.Series:
-        """
-        Get model coefficients to interpret feature importance.
-
-        Returns:
-            Series of coefficients sorted by absolute magnitude
-
-        Interpretation:
-            - Positive coefficient: feature increases predicted returns
-            - Negative coefficient: feature decreases predicted returns
-            - Larger magnitude = stronger effect
-        """
-        if not self.is_trained:
-            raise ValueError("Model must be trained before getting coefficients")
-
-        coefficients = pd.Series(
-            self.model.coef_, index=self.feature_names
-        ).sort_values(key=abs, ascending=False)
-
-        return coefficients
-
 
 class RandomForestReturnModel(BaseReturnModel):
     """
@@ -378,30 +357,6 @@ class XGBoostReturnModel(BaseReturnModel):
         # Handle missing values consistently
         X_filled = X.fillna(X.median())
         return self.model.predict(X_filled)
-
-    def get_feature_importance_plot(self, top_n: int = 20) -> None:
-        """
-        Display a horizontal bar chart of the most important features.
-
-        Args:
-            top_n: Number of top features to display (default: 20)
-
-        Note: Requires matplotlib. If not available, silently skips plotting.
-        """
-        try:
-            import matplotlib.pyplot as plt
-
-            importance_scores = self.get_feature_importance()
-            if importance_scores is not None:
-                plt.figure(figsize=(10, 8))
-                importance_scores.head(top_n).plot(kind="barh")
-                plt.title(f"Top {top_n} Feature Importances - {self.name}")
-                plt.tight_layout()
-                plt.show()
-        except ImportError:
-            self.logger.warning(
-                "matplotlib not installed - skipping feature importance plot"
-            )
 
 
 class ARMAReturnModel(BaseReturnModel):

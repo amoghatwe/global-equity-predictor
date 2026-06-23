@@ -215,13 +215,3 @@ class DataIngestionPipeline:
         output_path = DATA_PROCESSED_PATH / filename
         df.to_csv(output_path, index=True)
         logger.info(f"Analytical dataset saved to: {output_path}")
-
-    @classmethod
-    def load_processed_data(cls, filename: str = "processed_data.csv") -> pd.DataFrame:
-        """Load an existing analytical dataset from disk."""
-        input_path = DATA_PROCESSED_PATH / filename
-        if not input_path.exists():
-            logger.error(f"Analytical dataset not found at {input_path}")
-            return pd.DataFrame()
-            
-        return pd.read_csv(input_path, index_col=0, parse_dates=True)

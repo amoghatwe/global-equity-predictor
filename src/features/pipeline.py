@@ -368,13 +368,3 @@ class FeatureEngineeringPipeline:
         output_path = self.output_dir / filename
         df.to_csv(output_path, index=True)
         self.logger.info(f"Feature matrix saved to: {output_path}")
-
-    @classmethod
-    def load_features(cls, filename: str = "features.csv") -> pd.DataFrame:
-        """Load an existing feature matrix from disk."""
-        input_path = Path(DATA_FEATURES_PATH) / filename
-        if not input_path.exists():
-            logger.error(f"Feature matrix not found at {input_path}")
-            return pd.DataFrame()
-            
-        return pd.read_csv(input_path, index_col=0, parse_dates=True)

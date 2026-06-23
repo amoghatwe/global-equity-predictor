@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 
 from .base import BaseDataProvider
-from config.settings import MARKETS, START_DATE, END_DATE
+from config.settings import START_DATE, END_DATE
 
 # Set up module logger
 logger = logging.getLogger(__name__)
@@ -150,34 +150,5 @@ class EquityMarketProvider(BaseDataProvider):
         for market, missing_pct in missing_values_per_market.items():
             if missing_pct > 0.1:
                 self.logger.warning(f"Market '{market}' has {missing_pct:.1%} missing price points")
-        
-        return True
 
-    @staticmethod
-    def compute_forward_returns(
-        prices: pd.DataFrame, 
-        horizon_months: int = 36,
-        annualized: bool = True
-    ) -> pd.DataFrame:
-        """
-        Calculate future returns for use as ML targets.
-        
-        Args:
-            prices: DataFrame of historical prices.
-            horizon_months: How many months forward to look.
-            annualized: Whether to return annualized returns or total returns.
-            
-        Returns:
-            pd.DataFrame: Forward returns in percentage.
-        """
-        # Calculate the total change over the horizon
-        # (Price at T + horizon / Price at T) - 1
-        total_return = prices.shift(-horizon_months) / prices - 1
-        
-        if annualized:
-            # Formula: (1 + total_return)^(12 / horizon) - 1
-            calculated_returns = (1 + total_return) ** (12 / horizon_months) - 1
-        else:
-            calculated_returns = total_return
-            
-        return calculated_returns * 100  # Return as percentage (e.g., 8.5 instead of 0.085)
+        return True
