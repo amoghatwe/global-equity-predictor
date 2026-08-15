@@ -22,7 +22,7 @@ forecasting, specifically designed for asset allocation decisions in long-only p
 
 ```bash
 # Clone or create the project directory
-cd global_equity_predictor
+cd global-equity-predictor
 
 # Create virtual environment (recommended)
 python -m venv venv
@@ -87,7 +87,7 @@ predictions = model_pipeline.predict()
 ## Project Structure
 
 ```
-global_equity_predictor/
+global-equity-predictor/
 ├── data/                   # Data storage
 │   ├── raw/               # Raw downloaded data
 │   ├── processed/         # Cleaned and merged data
@@ -124,283 +124,34 @@ Edit `config/settings.py` to customize:
 
 Without FRED key, the system will still work but with limited US macro data.
 
-## Model Performance
+## Model Performance (Out-of-Sample)
 
-Typical performance metrics on historical data:
+Walk-forward evaluation with 36-month train/test gap (no label leakage from
+overlapping 3-year forward-return targets). Expanding-window CV, 5 folds per
+market, min training: 10 years, 5 markets (USA, Europe, Japan, UK, EM).
+Feature columns with <90% coverage dropped. Values pooled across all 25
+folds; per-market detail in `reports/oos_results.json`.
 
-- **R²**: 0.35-0.45 (explains 35-45% of return variation)
-- **Directional Accuracy**: 60-70% (correctly predicts up/down)
-- **RMSE**: 4-6% annualized
+| Model           | RMSE    | MAE     | R²       | Dir. Acc. | Notes                |
+|-----------------|---------|---------|----------|-----------|----------------------|
+| Ensemble        | 13.055  | 12.046  | -16.718  | 0.712     | Ridge + RF + XGBoost |
+| ARIMA(1,1,1)    | 12.523  | 11.835  | -13.691  | 0.630     | Univariate baseline  |
+| Historical Mean | 6.760   | 5.995   | -4.072   | 0.823     | Constant prediction  |
 
-*Note: These are illustrative. Actual performance depends on data quality and market regime.*
+Protocol: expanding-window walk-forward, 36-month train/test gap.
+
+**Honest finding: after fixing label leakage, the ensemble does not beat the
+historical-mean baseline on RMSE/MAE/R² in any market.** Positive
+directional accuracy (0.71) mostly reflects class imbalance (36-month
+returns are positive ~80% of the time). Treat predictions as a ranking
+signal at best, not calibrated return forecasts. Reproduce with:
+`python -m pytest tests/test_oos_evaluation.py -v -s`.
 
 ## Mathematical Processes
 
-This section describes the complete mathematical pipeline from raw data to final prediction.
-
-### 1. Data Collection & Preprocessing
-
-**Equity Prices** — Five market ETFs (SPY, VGK, EWJ, EWU, EEM) are downloaded from Yahoo Finance. Adjusted close prices are resampled to monthly via last-observation sampling: `P_month(t) = P(d_T)` where `d_T` is the last trading day of month `t`.
-
-**World Bank Macro Data** — Nine annual indicators (GDP, inflation, industrial production, M2, credit-to-GDP, population) are fetched per country. Annual data is interpolated to monthly frequency using linear interpolation, then forward-filled up to 3 months:
-
-```
-X_monthly(t) = interpolate(X_annual),  then  X(t) = ffill(X(t), limit=3)
-```
-
-For Emerging Markets, 15 countries are aggregated into a single series.
-
-**FRED US Data** — Nine monthly US series (yields, CPI, unemployment, M2, DXY, VIX) are resampled to month-end. A yield curve spread is computed:
-
-```
-yield_curve_spread(t) = yield_10y(t) - yield_2y(t)
-```
-
-All three sources are outer-joined on a monthly date index.
-
-### 2. Target Variable
-
-The prediction target is the **3-year forward annualized return**:
-
-```
-total_return(t) = P(t + 36) / P(t) - 1
-
-annualized_return(t) = (1 + total_return(t))^(12/36) - 1
-
-target(t) = annualized_return(t) × 100    [expressed as %]
-```
-
-The last 36 months of data have NaN targets since future prices are unknown.
-
-### 3. Feature Engineering
-
-Six feature categories are constructed from the merged monthly data:
-
-#### 3a. Valuation Features
-
-For each market equity price series `P(t)` and windows `w ∈ {12, 36, 60}` months:
-
-```
-price_ma_ratio_w(t) = P(t) / MA_w(t)
-
-    where  MA_w(t) = (1/w) × Σ_{i=0}^{w-1} P(t - i)
-
-trend_deviation_60(t) = [P(t) - MA_60(t)] / MA_60(t) × 100
-```
-
-A price above its moving average yields `ratio > 1` (overvalued relative to trend), while below yields `ratio < 1`.
-
-#### 3b. Growth Features
-
-For GDP growth columns:
-
-```
-gdp_trend(t)       = MA_36(gdp_growth(t))
-
-gdp_deviation(t)   = gdp_growth(t) - MA_36(gdp_growth(t))
-
-gdp_yoy_change(t)  = gdp_growth(t) - gdp_growth(t - 12)
-```
-
-For industrial production:
-
-```
-ip_growth(t) = [IP(t) / IP(t - 12) - 1] × 100
-
-ip_trend(t)  = MA_36(ip_growth(t))
-```
-
-#### 3c. Inflation Features
-
-For CPI/inflation columns:
-
-```
-inflation_trend(t)     = MA_36(inflation(t))
-
-inflation_deviation(t) = inflation(t) - MA_36(inflation(t))
-```
-
-**Real interest rate** (Fisher equation approximation):
-
-```
-real_rate_10y(t) = yield_10y(t) - inflation(t)
-```
-
-#### 3d. Interest Rate Features
-
-```
-yield_10y_trend(t)       = MA_36(yield_10y(t))
-
-yield_10y_change_12m(t)  = yield_10y(t) - yield_10y(t - 12)
-
-fed_funds_change_12m(t)  = fed_funds(t) - fed_funds(t - 12)
-
-yield_spread(t)           = yield_10y(t) - yield_2y(t)
-
-yield_spread_change_12m(t) = spread(t) - spread(t - 12)
-```
-
-The yield curve spread captures term structure slope — a key recession signal when inverted.
-
-#### 3e. Credit Features
-
-```
-m2_growth_12m(t) = [M2(t) / M2(t - 12) - 1] × 100
-
-m2_growth_trend(t) = MA_36(m2_growth_12m(t))
-
-credit_change_12m(t) = credit(t) - credit(t - 12)
-```
-
-#### 3f. Momentum Features
-
-For each market, trailing returns over `m ∈ {1, 3, 6, 12}` months:
-
-```
-return_m(t) = [P(t) / P(t - m) - 1] × 100
-```
-
-Annualized rolling volatility over `w ∈ {6, 12}` months:
-
-```
-vol_w(t) = std(r, window=w) × √12 × 100
-
-    where  r(t) = P(t) / P(t - 1) - 1
-```
-
-VIX features:
-
-```
-vix_level(t)  = VIX(t)
-
-vix_trend(t)  = MA_12(VIX(t))
-```
-
-### 4. Model Training
-
-#### 4a. Preprocessing
-
-Rows with NaN targets are dropped. Remaining NaN feature values are imputed with the **column median** from the training set:
-
-```
-X_ij = median(X_col_j | X_col_j ≠ NaN)    if X_ij = NaN
-```
-
-#### 4b. Walk-Forward Time Series Cross-Validation
-
-A 5-fold expanding-window CV scheme preserves temporal ordering:
-
-```
-Min training window: 120 months (10 years)
-Fold size: (n_samples - 120) / 5
-
-Fold 1: Train [0 .. 120+f)       → Test [120+f .. 120+2f)
-Fold 2: Train [0 .. 120+2f)      → Test [120+2f .. 120+3f)
-  ...
-Fold 5: Train [0 .. 120+5f)      → Test [120+5f .. n)
-```
-
-No data from the future leaks into training — each fold only uses indices strictly before the test window.
-
-#### 4c. Ridge Regression (LinearReturnModel)
-
-```
-min_β  Σ_i (y_i - X_i β - β_0)²  +  α × ||β||²
-
-    α = 1.0   (L2 penalty)
-    fit_intercept = True
-```
-
-Ridge shrinks coefficients toward zero, reducing variance at the cost of slight bias. With many correlated macro features, this prevents overfitting.
-
-#### 4d. Random Forest (RandomForestReturnModel)
-
-An ensemble of `B = 200` decision trees, each trained on a bootstrap sample:
-
-```
-ŷ = (1/B) × Σ_b ŷ_b(x)
-
-    n_estimators = 200
-    max_depth = 10
-    min_samples_split = 5
-    min_samples_leaf = 2
-    max_features = √p    (p = total features; √p considered per split)
-```
-
-Each tree sees a random subset of rows and √p random features at each split, decorrelating predictions and reducing ensemble variance.
-
-#### 4e. XGBoost (XGBoostReturnModel)
-
-Gradient-boosted trees fit residuals sequentially:
-
-```
-ŷ(x) = Σ_b  η × f_b(x)
-
-    where f_b is the b-th tree fit to the negative gradient of the loss
-
-    n_estimators = 200
-    max_depth = 6
-    learning_rate (η) = 0.05
-    subsample = 0.8         (row sampling per tree)
-    colsample_bytree = 0.8  (feature sampling per tree)
-    reg_alpha (λ_1) = 0.1   (L1 regularization on leaf weights)
-    reg_lambda (λ_2) = 1.0  (L2 regularization on leaf weights)
-```
-
-Each new tree corrects the residual error of the ensemble so far. The low learning rate (0.05) and row/column subsampling prevent overfitting.
-
-### 5. Ensemble Prediction
-
-The three models are combined via an **equal-weight average**:
-
-```
-ŷ_ensemble = (1/3) × [ŷ_ridge + ŷ_rf + ŷ_xgb]
-```
-
-There is no stacking, meta-learner, or inverse-variance weighting — the ensemble is a simple arithmetic mean. This diversifies model risk since each model class captures different patterns (linear trends, interactions, nonlinear residual structure).
-
-### 6. Evaluation Metrics
-
-For predictions `ŷ` against true values `y` on each CV fold:
-
-```
-RMSE  = √( mean( (y_i - ŷ_i)² ) )
-
-MAE   = mean( |y_i - ŷ_i| )
-
-R²    = 1 - Σ(y_i - ŷ_i)² / Σ(y_i - ȳ)²
-
-Dir. Accuracy = mean( sign(y_i) == sign(ŷ_i) )
-
-Correlation   = Pearson r(y, ŷ)
-```
-
-CV metrics are aggregated by taking the **mean** and **standard deviation** across the 5 folds.
-
-### 7. Confidence Classification
-
-The standard deviation of the three model predictions determines confidence:
-
-```
-model_std = std(ŷ_ridge, ŷ_rf, ŷ_xgb)
-
-model_std < 1.0   →  "High" confidence
-1.0 ≤ model_std < 2.5  →  "Medium" confidence
-model_std ≥ 2.5  →  "Low" confidence
-```
-
-When all three models agree closely (low dispersion), the prediction is considered more reliable.
-
-### 8. Pipeline Summary
-
-| Stage | Input | Operation | Output |
-|-------|-------|-----------|--------|
-| Data Collection | APIs | Download, resample to monthly, interpolate, merge | Monthly multi-source DataFrame |
-| Feature Engineering | Monthly data | Rolling means, ratios, pct changes, volatilities | Feature matrix X |
-| Target Creation | Monthly prices | `((P(t+36)/P(t)) - 1)^(12/36) - 1` in % | Target vector y |
-| Model Training | X, y | Ridge + RF + XGBoost with 5-fold expanding-window CV | Three trained models per market |
-| Prediction | Latest feature row | Each model predicts; ensemble = equal-weight mean | Scalar expected return per market |
-| Reporting | Predictions | Rank by return, classify confidence, compare to 7% norm | Console / PDF / HTML report |
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete mathematical pipeline
+(data collection, feature engineering, model training, evaluation metrics,
+and confidence classification).
 
 ## Use Cases
 
