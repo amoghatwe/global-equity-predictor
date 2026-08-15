@@ -93,6 +93,8 @@ MODEL_CONFIG = {
     "n_splits": 5,  # For time series cross-validation
     "min_train_years": 10,
     "max_train_years": 25,
+    "gap_months": 36,    # >= forecast horizon; prevents label leakage from 36-month targets
+    "embargo_pct": 0.0,  # gap_months alone handles the train/test overlap
 }
 
 # Linear Regression Parameters

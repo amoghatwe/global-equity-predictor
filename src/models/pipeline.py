@@ -85,7 +85,9 @@ class ModelTrainingPipeline:
         cross_validator = TimeSeriesCrossValidator(
             n_splits=MODEL_CONFIG["n_splits"],
             min_train_years=MODEL_CONFIG["min_train_years"],
-            max_train_years=MODEL_CONFIG.get("max_train_years")
+            max_train_years=MODEL_CONFIG.get("max_train_years"),
+            gap_months=MODEL_CONFIG.get("gap_months", 36),
+            embargo_pct=MODEL_CONFIG.get("embargo_pct", 0.0),
         )
 
         pipeline_results = {}
@@ -116,10 +118,13 @@ class ModelTrainingPipeline:
         X_market = self._select_features_for_market(market)
         y = self.feature_matrix[target_col]
         
-        self.logger.info(f"Using {len(X_market.columns)} features for {market}")
+        # 2. Data Cleaning: drop sparse feature columns, then rows with NaNs.
+        # Macro series that never loaded (or only cover recent years) are
+        # all/partially NaN; dropping rows alone would wipe out history.
+        combined = X_market.join(y)
+        coverage = combined.drop(columns=[target_col]).notna().mean()
+        combined = combined.drop(columns=coverage[coverage < 0.9].index).dropna()
 
-        # 2. Data Cleaning: Align X and y and drop NaNs
-        combined = X_market.join(y).dropna()
         
         if len(combined) < (cv.min_train_months + 12):
             self.logger.error(f"Insufficient data for {market} after NaN removal ({len(combined)} rows)")
@@ -128,8 +133,9 @@ class ModelTrainingPipeline:
         X_trainable = combined.drop(columns=[target_col])
         y_trainable = combined[target_col]
 
-        # 3. Dynamic CV adjustment
-        max_possible_splits = (len(X_trainable) - cv.min_train_months) // 12
+        # 3. Dynamic CV adjustment (account for the gap buffer between train and test)
+        usable = len(X_trainable) - cv.min_train_months - cv.gap_months
+        max_possible_splits = usable // 12 if usable > 0 else 0
         actual_n_splits = 0
         fold_metrics_history = []
         
@@ -137,7 +143,9 @@ class ModelTrainingPipeline:
             actual_n_splits = min(cv.n_splits, max_possible_splits)
             market_cv = TimeSeriesCrossValidator(
                 n_splits=actual_n_splits,
-                min_train_years=cv.min_train_months // 12
+                min_train_years=cv.min_train_months // 12,
+                gap_months=cv.gap_months,
+                embargo_pct=cv.embargo_pct,
             )
             
             for fold_num, (train_idx, test_idx) in enumerate(market_cv.split(X_trainable)):
@@ -211,7 +219,15 @@ class ModelTrainingPipeline:
                 preds = model.predict(X_test)
                 results[name] = model.evaluate(y_test.values, preds)
             except Exception:
-                results[name] = {"rmse": np.nan, "r2": np.nan}
+                # Keep the full metric schema on failure so downstream
+                # aggregation can nanmean over folds without KeyError.
+                results[name] = {
+                    "rmse": np.nan,
+                    "mae": np.nan,
+                    "r2": np.nan,
+                    "directional_accuracy": np.nan,
+                    "correlation": np.nan,
+                }
         return results
 
     def _aggregate_metrics(self, history: List[Dict]) -> Dict[str, Dict]:
@@ -220,8 +236,11 @@ class ModelTrainingPipeline:
         summary = {}
         for name in model_names:
             model_folds = [h[name] for h in history]
-            metric_names = model_folds[0].keys()
-            summary[name] = {m: np.nanmean([f[m] for f in model_folds]) for m in metric_names}
+            metric_names = set().union(*(f.keys() for f in model_folds))
+            summary[name] = {
+                m: (np.nanmean([f[m] for f in model_folds]) if any(m in f for f in model_folds) else np.nan)
+                for m in metric_names
+            }
         return summary
 
     def generate_forecasts(self) -> Dict[str, pd.DataFrame]:
