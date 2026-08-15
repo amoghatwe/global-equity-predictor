@@ -238,19 +238,22 @@ LOG_LEVEL=DEBUG
 
 ### Interpretation
 - **R²**: % of return variation explained (higher is better)
-  - <0.2: Weak model
-  - 0.2-0.5: Moderate model
+  - Negative: worse than predicting the historical mean — the measured OOS
+    value for this project's ensemble is strongly negative (see README
+    "Model Performance (Out-of-Sample)")
+  - 0-0.2: Weak
+  - 0.2-0.5: Moderate
   - >0.5: Strong model (rare in finance)
 
 - **RMSE**: Root mean squared error in percentage points
   - <3%: Very accurate
   - 3-6%: Good
-  - >6%: High uncertainty
+  - >6%: High uncertainty (the measured OOS ensemble RMSE is 13.055)
 
 - **Directional Accuracy**: % of correct up/down predictions
-  - 50%: Random (coin flip)
-  - 55-60%: Useful edge
-  - >60%: Strong predictive power
+  - Beware class imbalance: ~80% of 36-month windows are positive, so a
+    constant "up" guess scores ~0.8 — compare against that floor, not 0.5
+  - 55-60% above the majority-class rate: Useful edge
 
 - **Correlation**: Correlation between predicted and actual returns
   - 0.3-0.5: Typical for financial forecasting

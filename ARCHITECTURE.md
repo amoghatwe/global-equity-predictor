@@ -77,6 +77,12 @@ Total: 19 Python files, ~2,400 lines of code
 
 ### 4. **Time Series Safety**
 - Walk-forward cross-validation prevents look-ahead bias
+- 36-month gap between train and test windows: 3-year forward-return targets
+  computed at month `t` span `[t, t+36)`, so a test window starting right after
+  training would otherwise score months whose targets overlap training labels
+- World Bank annual data is lagged one year (publication delay) and
+  forward-filled monthly — never interpolated, which would leak year-Y values
+  into months of year Y
 - No shuffling or random sampling of time series data
 - Expanding/rolling windows for training sets
 
@@ -174,6 +180,23 @@ Creates ML-ready features:
 - **Momentum**: Trailing returns, volatility
 
 Also creates **targets** (3-year forward annualized returns).
+
+**Out-of-sample evaluation.** Walk-forward with the 36-month gap, 5 folds per
+market, min 10 years training, across USA/Europe/Japan/UK/EM (25 folds
+total; `tests/test_oos_evaluation.py`, results in `reports/oos_results.json`).
+Measured pooled results:
+
+| Model           | RMSE   | R²       | Dir. Acc. |
+|-----------------|--------|----------|-----------|
+| Ensemble        | 13.055 | -16.718  | 0.712     |
+| ARIMA(1,1,1)    | 12.523 | -13.691  | 0.630     |
+| Historical Mean | 6.760  | -4.072   | 0.823     |
+
+The ensemble does **not** beat the no-skill historical-mean floor on
+RMSE/R²/MAE in any market after leakage was removed. Directional accuracy is
+inflated by class imbalance (~80% of 36-month windows are positive).
+Predictions should be treated as a weak ranking signal, not calibrated
+forecasts.
 
 ### Models
 
