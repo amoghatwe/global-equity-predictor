@@ -163,10 +163,13 @@ class DataIngestionPipeline:
         # Process World Bank (Macro)
         if raw_datasets.get("world_bank") is not None:
             wb_data = raw_datasets["world_bank"]
-            # Annual to Monthly: linear interpolation for smooth macro trends
-            wb_monthly = wb_data.resample('ME').interpolate(method='linear')
-            # Limit forward fill to 12 months to avoid stale data propagation
-            processed_components["macro"] = wb_monthly.ffill(limit=12)
+            # Annual to Monthly: shift forward 1 year, then forward-fill.
+            # Year Y's figure is typically published mid-Y+1; holding the
+            # prior-year value avoids within-year look-ahead bias that
+            # linear interpolation would introduce.
+            wb_shifted = wb_data.shift(periods=1, freq='YS')
+            wb_monthly = wb_shifted.resample('ME').ffill()
+            processed_components["macro"] = wb_monthly
             
         # Process FRED
         if raw_datasets.get("fred") is not None:
