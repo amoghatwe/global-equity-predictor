@@ -445,6 +445,27 @@ class ARMAReturnModel(BaseReturnModel):
         X_valid = X[valid_mask].fillna(X[valid_mask].median())
         y_valid = y[valid_mask]
 
+        # Standardize exogenous features and drop collinear columns.
+        # Unscaled, rank-deficient macro features (137 columns, rank ~85)
+        # give near-singular cross-products: the MLE lands on huge canceling
+        # coefficients (|coef| ~1e13) that fit in-sample but explode in any
+        # forecast. Pivoted QR keeps a maximal independent subset; train-time
+        # stats/columns are stored to apply the identical transform at predict.
+        if X_valid.shape[1] > 0:
+            from scipy.linalg import qr as _qr
+
+            # Pivoted QR with a 1e-2 relative-R-diagonal tolerance drops
+            # near-collinear columns (matrix_rank's default tol leaves them;
+            # they still wreck conditioning). Keeps an independent subset.
+            _, R, pivot = _qr(X_valid.to_numpy(), mode="economic", pivoting=True)
+            diag = np.abs(np.diag(R))
+            keep = pivot[: np.sum(diag >= diag[0] * 1e-2)]
+            self._exog_cols = list(X_valid.columns[np.sort(keep)])
+            X_valid = X_valid[self._exog_cols]
+            self._exog_mean = X_valid.mean()
+            self._exog_std = X_valid.std(ddof=0).replace(0, 1.0)
+            X_valid = (X_valid - self._exog_mean) / self._exog_std
+
         # ARMA needs enough data relative to the order
         # Rule of thumb: at least 3x the order plus some buffer
         minimum_required_samples = max(self.arma_order) * 3 + 10
@@ -518,6 +539,11 @@ class ARMAReturnModel(BaseReturnModel):
 
         # Handle missing values
         X_filled = X.fillna(X.median())
+
+        # Apply the train-time column subset and standardization
+        if hasattr(self, "_exog_mean") and X_filled.shape[1] > 0:
+            X_filled = X_filled[self._exog_cols]
+            X_filled = (X_filled - self._exog_mean) / self._exog_std
         forecast_steps = len(X_filled)
 
         # Use exogenous variables only if provided
@@ -618,11 +644,13 @@ class ARIMAReturnModel(BaseReturnModel):
         Args:
             **kwargs: Override default parameters
                 order: Tuple (p, d, q) - default (1, 1, 1)
-                trend: 'c', 'ct', or 'n' - default 'c'
+                trend: 'c', 'ct', or 'n' - default 'n'. Note statsmodels
+                    accepts 'c' with d>0 but treats it as drift on the
+                    differenced series; 'n' avoids the surprise.
         """
         params = {**ARIMA_PARAMS, **kwargs}
         self.arima_order = params.pop("order", (1, 1, 1))
-        self.arima_trend = params.pop("trend", "c")
+        self.arima_trend = params.pop("trend", "n")
         super().__init__("ARIMA", None)
 
     def train(
@@ -658,6 +686,22 @@ class ARIMAReturnModel(BaseReturnModel):
         valid_mask = y.notna()
         X_valid = X[valid_mask].fillna(X[valid_mask].median())
         y_valid = y[valid_mask]
+        # Standardize exogenous features and drop collinear columns
+        # (same rationale as ARMA above: rank-deficient exog yields huge
+        # canceling coefficients that explode out-of-sample).
+        if X_valid.shape[1] > 0:
+            from scipy.linalg import qr as _qr
+
+            # Pivoted QR with a 1e-2 relative-R-diagonal tolerance drops
+            # near-collinear columns (same rationale as ARMA above).
+            _, R, pivot = _qr(X_valid.to_numpy(), mode="economic", pivoting=True)
+            diag = np.abs(np.diag(R))
+            keep = pivot[: np.sum(diag >= diag[0] * 1e-2)]
+            self._exog_cols = list(X_valid.columns[np.sort(keep)])
+            X_valid = X_valid[self._exog_cols]
+            self._exog_mean = X_valid.mean()
+            self._exog_std = X_valid.std(ddof=0).replace(0, 1.0)
+            X_valid = (X_valid - self._exog_mean) / self._exog_std
 
         # ARIMA needs sufficient data relative to the order
         # The differencing operation reduces effective sample size
@@ -730,13 +774,16 @@ class ARIMAReturnModel(BaseReturnModel):
 
         # Handle missing values consistently with training
         X_filled = X.fillna(X.median())
+
+        # Apply the train-time column subset and standardization
+        if hasattr(self, "_exog_mean") and X_filled.shape[1] > 0:
+            X_filled = X_filled[self._exog_cols]
+            X_filled = (X_filled - self._exog_mean) / self._exog_std
         forecast_steps = len(X_filled)
 
         # Include exogenous variables only if we have features
         exog_features = X_filled if X_filled.shape[1] > 0 else None
 
-        # Get forecast with predictions and confidence intervals
-        # The model automatically reverses the differencing transformation
         forecast_result = self.model.get_forecast(
             steps=forecast_steps, exog=exog_features
         )
@@ -781,7 +828,7 @@ class ARIMAReturnModel(BaseReturnModel):
             self.target_name = data["target_name"]
             self.is_trained = data["is_trained"]
             self.arima_order = data.get("arima_order", (1, 1, 1))
-            self.arima_trend = data.get("arima_trend", "c")
+            self.arima_trend = data.get("arima_trend", "n")
         self.logger.info(f"Loaded ARIMA model from {filepath}")
 
 

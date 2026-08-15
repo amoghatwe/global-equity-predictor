@@ -134,9 +134,11 @@ ARMA_PARAMS = {
 }
 
 # ARIMA Parameters
+# trend 'c' (constant) is invalid for d>0: differencing eliminates it and
+# SARIMAX fits an explosive model instead of rejecting it.
 ARIMA_PARAMS = {
     "order": (1, 1, 1),
-    "trend": "c",
+    "trend": "n",
 }
 
 # World Bank indicators
